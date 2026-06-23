@@ -1,0 +1,7 @@
+# Runtime: pure-Python — no external dependencies required.
+# Install the package itself in editable mode for development:
+#   pip install -e ".[dev]"
+#
+# Dev dependencies (pytest + ruff) are declared in pyproject.toml [project.optional-dependencies].
+pytest>=7
+ruff>=0.4
