@@ -1,0 +1,131 @@
+diff --git a/tests/test_schema.py b/tests/test_schema.py
+new file mode 100644
+index 0000000..0827f44
+--- /dev/null
++++ b/tests/test_schema.py
+@@ -0,0 +1,125 @@
++"""Tests for agent_eval.schema â€” dataclass construction and from_dict parsing."""
++
++from agent_eval.schema import ExpectedRun, Run, Step, ToolCall
++
++
++class TestToolCall:
++    def test_basic_construction(self):
++        tc = ToolCall(name="search", args={"query": "hello"})
++        assert tc.name == "search"
++        assert tc.args == {"query": "hello"}
++
++    def test_default_args(self):
++        tc = ToolCall(name="noop")
++        assert tc.args == {}
++
++    def test_from_dict(self):
++        tc = ToolCall.from_dict({"name": "calc", "args": {"expression": "1+1"}})
++        assert tc.name == "calc"
++        assert tc.args == {"expression": "1+1"}
++
++    def test_from_dict_no_args(self):
++        tc = ToolCall.from_dict({"name": "ping"})
++        assert tc.name == "ping"
++        assert tc.args == {}
++
++
++class TestStep:
++    def test_all_fields(self):
++        tc = ToolCall(name="search")
++        step = Step(thought="think", tool_call=tc, observation="result")
++        assert step.thought == "think"
++        assert step.tool_call is tc
++        assert step.observation == "result"
++
++    def test_defaults_are_none(self):
++        step = Step()
++        assert step.thought is None
++        assert step.tool_call is None
++        assert step.observation is None
++
++    def test_from_dict_with_tool_call(self):
++        d = {
++            "thought": "thinking",
++            "tool_call": {"name": "search", "args": {"q": "python"}},
++            "observation": "Python docs",
++        }
++        step = Step.from_dict(d)
++        assert step.thought == "thinking"
++        assert step.tool_call is not None
++        assert step.tool_call.name == "search"
++        assert step.observation == "Python docs"
++
++    def test_from_dict_null_tool_call(self):
++        d = {"thought": "done", "tool_call": None, "observation": None}
++        step = Step.from_dict(d)
++        assert step.tool_call is None
++
++    def test_from_dict_missing_keys(self):
++        # Should not raise; missing keys default to None
++        step = Step.from_dict({})
++        assert step.thought is None
++        assert step.tool_call is None
++        assert step.observation is None
++
++
++class TestRun:
++    def test_from_dict_basic(self):
++        d = {
++            "id": "r1",
++            "task": "do something",
++            "steps": [],
++            "final_answer": "done",
++            "goal_reached": True,
++        }
++        run = Run.from_dict(d)
++        assert run.id == "r1"
++        assert run.task == "do something"
++        assert run.steps == []
++        assert run.final_answer == "done"
++        assert run.goal_reached is True
++
++    def test_from_dict_goal_none(self):
++        d = {"id": "r2", "task": "t", "steps": [], "final_answer": ""}
++        run = Run.from_dict(d)
++        assert run.goal_reached is None
++
++    def test_from_dict_with_steps(self):
++        d = {
++            "id": "r3",
++            "task": "search task",
++            "steps": [
++                {"thought": "go", "tool_call": {"name": "search", "args": {}}, "observation": "x"}
++            ],
++            "final_answer": "x",
++            "goal_reached": False,
++        }
++        run = Run.from_dict(d)
++        assert len(run.steps) == 1
++        assert run.steps[0].tool_call is not None
++        assert run.steps[0].tool_call.name == "search"
++
++
++class TestExpectedRun:
++    def test_from_dict(self):
++        d = {
++            "id": "e1",
++            "expected_tools": ["search", "calc"],
++            "expected_answer": "42",
++            "expected_steps": 2,
++            "goal_description": "find the answer",
++        }
++        er = ExpectedRun.from_dict(d)
++        assert er.id == "e1"
++        assert er.expected_tools == ["search", "calc"]
++        assert er.expected_answer == "42"
++        assert er.expected_steps == 2
++        assert er.goal_description == "find the answer"
++
++    def test_from_dict_defaults(self):
++        d = {"id": "e2"}
++        er = ExpectedRun.from_dict(d)
++        assert er.expected_tools == []
++        assert er.expected_answer == ""
++        assert er.expected_steps == 1
++        assert er.goal_description == ""

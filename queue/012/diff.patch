@@ -1,0 +1,179 @@
+diff --git a/tests/test_metrics.py b/tests/test_metrics.py
+new file mode 100644
+index 0000000..f8c6b7a
+--- /dev/null
++++ b/tests/test_metrics.py
+@@ -0,0 +1,173 @@
++"""Tests for agent_eval.metrics â€” all hand-computed, deterministic.
++
++Metric definitions (abridged):
++  tool_call_correctness: set-based F1 of tool names (multiset)
++  goal_completion:       1.0 iff goal_reached is True
++  step_efficiency:       1.0 when actual <= expected, else expected/actual
++  trajectory_score:      0.4*tcf1 + 0.4*gc + 0.2*se
++"""
++
++import pytest
++
++from agent_eval.metrics import (
++    goal_completion,
++    step_efficiency,
++    tool_call_correctness,
++    trajectory_score,
++)
++
++# ---------------------------------------------------------------------------
++# tool_call_correctness
++# ---------------------------------------------------------------------------
++
++
++class TestToolCallCorrectness:
++    def test_perfect_match_single(self):
++        # A=["search"], E=["search"] â†’ TP=1, P=1, R=1, F1=1.0
++        assert tool_call_correctness(["search"], ["search"]) == pytest.approx(1.0)
++
++    def test_perfect_match_two(self):
++        # A=["search","calc"], E=["search","calc"] â†’ TP=2, P=1, R=1, F1=1.0
++        assert tool_call_correctness(["search", "calc"], ["search", "calc"]) == pytest.approx(1.0)
++
++    def test_order_does_not_matter(self):
++        # Order is irrelevant; set-based matching
++        assert tool_call_correctness(["calc", "search"], ["search", "calc"]) == pytest.approx(1.0)
++
++    def test_one_missing_tool(self):
++        # A=["search"], E=["search","calc"]
++        # TP=1, P=1/1=1.0, R=1/2=0.5, F1=2*1*0.5/1.5 = 2/3
++        result = tool_call_correctness(["search"], ["search", "calc"])
++        assert result == pytest.approx(2 / 3)
++
++    def test_extra_spurious_tool(self):
++        # A=["search","calc"], E=["search"]
++        # TP=1, P=1/2=0.5, R=1/1=1.0, F1=2*0.5*1/1.5 = 2/3
++        result = tool_call_correctness(["search", "calc"], ["search"])
++        assert result == pytest.approx(2 / 3)
++
++    def test_completely_wrong_tools(self):
++        # A=["calc"], E=["search"] â†’ TP=0, F1=0.0
++        assert tool_call_correctness(["calc"], ["search"]) == pytest.approx(0.0)
++
++    def test_both_empty(self):
++        # Nothing expected, nothing called â†’ perfect by definition
++        assert tool_call_correctness([], []) == pytest.approx(1.0)
++
++    def test_actual_empty_expected_nonempty(self):
++        # Called nothing but expected something â†’ R=0, F1=0
++        assert tool_call_correctness([], ["search"]) == pytest.approx(0.0)
++
++    def test_actual_nonempty_expected_empty(self):
++        # Called something but nothing was expected â†’ P=0, F1=0
++        assert tool_call_correctness(["search"], []) == pytest.approx(0.0)
++
++    def test_duplicate_tools_multiset(self):
++        # A=["search","search"], E=["search","search"] â†’ TP=2, P=1, R=1, F1=1.0
++        assert tool_call_correctness(["search", "search"], ["search", "search"]) == pytest.approx(
++            1.0
++        )
++
++    def test_duplicate_actual_more_than_expected(self):
++        # A=["search","search","search"], E=["search"]
++        # TP=min(3,1)=1, P=1/3, R=1/1=1, F1=2*(1/3)*1/(1/3+1)=2/3/4/3=1/2
++        # P=1/3, R=1, F1=2*(1/3)/(1/3+1)=2*(1/3)/(4/3)=(2/3)*(3/4)=1/2
++        result = tool_call_correctness(["search", "search", "search"], ["search"])
++        assert result == pytest.approx(0.5)
++
++    def test_mixed_tools(self):
++        # A=["search","fetch","calc"], E=["search","calc"]
++        # actual_counts: search=1,fetch=1,calc=1
++        # expected_counts: search=1,calc=1
++        # TP = min(1,1) for search + min(1,1) for calc = 2
++        # P=2/3, R=2/2=1.0, F1=2*(2/3)*1/(2/3+1)=2*(2/3)/(5/3)=4/3*3/5=4/5=0.8
++        result = tool_call_correctness(["search", "fetch", "calc"], ["search", "calc"])
++        assert result == pytest.approx(0.8)
++
++
++# ---------------------------------------------------------------------------
++# goal_completion
++# ---------------------------------------------------------------------------
++
++
++class TestGoalCompletion:
++    def test_true_returns_one(self):
++        assert goal_completion(True) == pytest.approx(1.0)
++
++    def test_false_returns_zero(self):
++        assert goal_completion(False) == pytest.approx(0.0)
++
++    def test_none_returns_zero(self):
++        assert goal_completion(None) == pytest.approx(0.0)
++
++
++# ---------------------------------------------------------------------------
++# step_efficiency
++# ---------------------------------------------------------------------------
++
++
++class TestStepEfficiency:
++    def test_equal_steps(self):
++        # actual == expected â†’ 1.0
++        assert step_efficiency(3, 3) == pytest.approx(1.0)
++
++    def test_agent_fewer_steps(self):
++        # actual=1, expected=2 â†’ actual <= expected â†’ 1.0 (finishing early is fine)
++        assert step_efficiency(1, 2) == pytest.approx(1.0)
++
++    def test_agent_more_steps(self):
++        # actual=4, expected=2 â†’ actual > expected â†’ expected/actual = 2/4 = 0.5
++        assert step_efficiency(4, 2) == pytest.approx(0.5)
++
++    def test_both_zero(self):
++        # Trivially efficient
++        assert step_efficiency(0, 0) == pytest.approx(1.0)
++
++    def test_expected_zero_actual_nonzero(self):
++        # Agent did work when none was needed â†’ 0.0
++        assert step_efficiency(3, 0) == pytest.approx(0.0)
++
++    def test_actual_zero_expected_nonzero(self):
++        # Agent did nothing when steps were needed â†’ actual=0 <= expected=2 â†’ 1.0?
++        # No: actual=0 but expected>0 means the agent produced no output at all,
++        # which falls through to the general rule: 0 <= 2 â†’ 1.0.
++        assert step_efficiency(0, 2) == pytest.approx(1.0)
++
++    def test_large_actual_small_expected(self):
++        # actual=10, expected=2 â†’ actual > expected â†’ expected/actual = 2/10 = 0.2
++        assert step_efficiency(10, 2) == pytest.approx(0.2)
++
++    def test_negative_raises(self):
++        with pytest.raises(ValueError):
++            step_efficiency(-1, 2)
++
++    def test_negative_expected_raises(self):
++        with pytest.raises(ValueError):
++            step_efficiency(2, -1)
++
++
++# ---------------------------------------------------------------------------
++# trajectory_score
++# ---------------------------------------------------------------------------
++
++
++class TestTrajectoryScore:
++    def test_perfect_score(self):
++        # 0.4*1 + 0.4*1 + 0.2*1 = 1.0
++        assert trajectory_score(1.0, 1.0, 1.0) == pytest.approx(1.0)
++
++    def test_all_zero(self):
++        assert trajectory_score(0.0, 0.0, 0.0) == pytest.approx(0.0)
++
++    def test_weighted_combination(self):
++        # 0.4*0.5 + 0.4*0.8 + 0.2*1.0 = 0.2 + 0.32 + 0.2 = 0.72
++        result = trajectory_score(0.5, 0.8, 1.0)
++        assert result == pytest.approx(0.72)
++
++    def test_only_efficiency_matters(self):
++        # 0.4*0 + 0.4*0 + 0.2*1 = 0.2
++        assert trajectory_score(0.0, 0.0, 1.0) == pytest.approx(0.2)
++
++    def test_goal_and_tools_only(self):
++        # 0.4*1 + 0.4*1 + 0.2*0 = 0.8
++        assert trajectory_score(1.0, 1.0, 0.0) == pytest.approx(0.8)

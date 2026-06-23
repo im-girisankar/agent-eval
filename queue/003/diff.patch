@@ -1,0 +1,97 @@
+diff --git a/examples/sample_runs.json b/examples/sample_runs.json
+new file mode 100644
+index 0000000..134fc23
+--- /dev/null
++++ b/examples/sample_runs.json
+@@ -0,0 +1,91 @@
++{
++  "runs": [
++    {
++      "id": "run-001",
++      "task": "What is the capital of France and its population?",
++      "steps": [
++        {
++          "thought": "I need to search for the capital of France.",
++          "tool_call": {"name": "search", "args": {"query": "capital of France"}},
++          "observation": "Paris is the capital of France."
++        },
++        {
++          "thought": "Now I need the population of Paris.",
++          "tool_call": {"name": "search", "args": {"query": "population of Paris"}},
++          "observation": "Paris has a population of approximately 2.1 million in the city proper."
++        }
++      ],
++      "final_answer": "The capital of France is Paris, with a population of about 2.1 million.",
++      "goal_reached": true
++    },
++    {
++      "id": "run-002",
++      "task": "Calculate 15% tip on a $48 dinner bill.",
++      "steps": [
++        {
++          "thought": "I should use the calculator to compute 15% of 48.",
++          "tool_call": {"name": "calculator", "args": {"expression": "48 * 0.15"}},
++          "observation": "7.2"
++        },
++        {
++          "thought": "The tip is $7.20. Let me also compute the total.",
++          "tool_call": {"name": "calculator", "args": {"expression": "48 + 7.2"}},
++          "observation": "55.2"
++        },
++        {
++          "thought": "I have all the information needed.",
++          "tool_call": null,
++          "observation": null
++        }
++      ],
++      "final_answer": "A 15% tip on $48 is $7.20, making the total $55.20.",
++      "goal_reached": true
++    },
++    {
++      "id": "run-003",
++      "task": "Find the latest Python version and check if it supports pattern matching.",
++      "steps": [
++        {
++          "thought": "I'll search for the latest Python version.",
++          "tool_call": {"name": "search", "args": {"query": "latest Python version 2024"}},
++          "observation": "Python 3.12 is the latest stable release."
++        },
++        {
++          "thought": "Let me look up pattern matching support.",
++          "tool_call": {"name": "search", "args": {"query": "Python pattern matching PEP 634"}},
++          "observation": "Structural pattern matching was introduced in Python 3.10 via PEP 634."
++        },
++        {
++          "thought": "I also want to double-check the docs.",
++          "tool_call": {"name": "fetch_url", "args": {"url": "https://docs.python.org/3/whatsnew/3.10.html"}},
++          "observation": "Python 3.10 added structural pattern matching with the match/case statement."
++        }
++      ],
++      "final_answer": "The latest Python version is 3.12. Pattern matching (match/case) has been supported since Python 3.10.",
++      "goal_reached": false
++    }
++  ],
++  "expected": [
++    {
++      "id": "run-001",
++      "expected_tools": ["search", "search"],
++      "expected_answer": "Paris is the capital of France with approximately 2.1 million residents.",
++      "expected_steps": 2,
++      "goal_description": "Identify the capital and its population."
++    },
++    {
++      "id": "run-002",
++      "expected_tools": ["calculator", "calculator"],
++      "expected_answer": "Tip: $7.20; Total: $55.20",
++      "expected_steps": 2,
++      "goal_description": "Compute 15% tip and total for a $48 bill."
++    },
++    {
++      "id": "run-003",
++      "expected_tools": ["search", "search"],
++      "expected_answer": "Latest Python is 3.12; pattern matching supported since 3.10.",
++      "expected_steps": 2,
++      "goal_description": "Find latest Python version and confirm pattern matching support."
++    }
++  ]
++}

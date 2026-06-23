@@ -1,0 +1,32 @@
+diff --git a/examples/perfect_run.json b/examples/perfect_run.json
+new file mode 100644
+index 0000000..975d3ae
+--- /dev/null
++++ b/examples/perfect_run.json
+@@ -0,0 +1,26 @@
++{
++  "runs": [
++    {
++      "id": "perfect-001",
++      "task": "Search for the boiling point of water in Celsius.",
++      "steps": [
++        {
++          "thought": "I will search for the boiling point of water.",
++          "tool_call": {"name": "search", "args": {"query": "boiling point of water Celsius"}},
++          "observation": "Water boils at 100 degrees Celsius at standard pressure."
++        }
++      ],
++      "final_answer": "Water boils at 100 degrees Celsius at standard atmospheric pressure.",
++      "goal_reached": true
++    }
++  ],
++  "expected": [
++    {
++      "id": "perfect-001",
++      "expected_tools": ["search"],
++      "expected_answer": "Water boils at 100Â°C.",
++      "expected_steps": 1,
++      "goal_description": "State the boiling point of water in Celsius."
++    }
++  ]
++}

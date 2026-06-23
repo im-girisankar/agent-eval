@@ -1,0 +1,163 @@
+diff --git a/src/agent_eval/metrics.py b/src/agent_eval/metrics.py
+new file mode 100644
+index 0000000..92a8f13
+--- /dev/null
++++ b/src/agent_eval/metrics.py
+@@ -0,0 +1,157 @@
++"""Deterministic trajectory evaluation metrics.
++
++All functions are pure: same inputs always produce the same float output.
++No randomness, no network, no side-effects.
++
++Metric definitions
++------------------
++tool_call_correctness(actual_tools, expected_tools) -> float
++    Set-based F1 of tool names.
++
++    Let A = multiset of names from actual_tools,
++        E = multiset of names from expected_tools.
++
++    true_positives  = sum over each distinct name n of min(count(n,A), count(n,E))
++    precision       = true_positives / len(A)   (0.0 if A is empty)
++    recall          = true_positives / len(E)   (0.0 if E is empty)
++    F1              = 2*P*R / (P+R)             (0.0 if P+R == 0)
++
++    A run that calls exactly the right tools (possibly in a different order)
++    scores F1 = 1.0.  Extra spurious calls lower precision; missing calls lower
++    recall.  Duplicate calls are handled via multiset intersection.
++
++goal_completion(goal_reached) -> float
++    1.0 if goal_reached is True, 0.0 otherwise (including None / False).
++
++step_efficiency(actual_steps, expected_steps) -> float
++    1.0 when actual_steps <= expected_steps (finishing early or on time is fine),
++    else expected_steps / actual_steps.
++
++    Edge cases:
++    - Both 0: returns 1.0 (trivially efficient).
++    - expected 0 and actual > 0: returns 0.0 (agent did unnecessary work).
++
++trajectory_score(tcf1, gc, se) -> float
++    Weighted composite:
++        0.4 * tool_call_correctness
++      + 0.4 * goal_completion
++      + 0.2 * step_efficiency
++    All inputs must already be in [0.0, 1.0].
++"""
++
++from __future__ import annotations
++
++from collections import Counter
++
++
++def tool_call_correctness(actual_tools: list[str], expected_tools: list[str]) -> float:
++    """Return the set-based F1 score of tool-call names.
++
++    Uses multiset intersection so that duplicate tool calls are handled
++    correctly (calling ``search`` twice counts as two actual calls of
++    ``search``; if only one is expected, only one counts as a true positive).
++
++    Args:
++        actual_tools:   Tool names actually called by the agent, in order.
++        expected_tools: Tool names in the gold reference, in order.
++
++    Returns:
++        F1 score in [0.0, 1.0].  Returns 0.0 when both lists are empty
++        to avoid division-by-zero; if both are empty the score is 1.0
++        because the agent called exactly the expected (nothing) tools.
++
++    Examples:
++        >>> tool_call_correctness(["search", "calc"], ["search", "calc"])
++        1.0
++        >>> tool_call_correctness(["search"], ["search", "calc"])
++        0.6666...
++        >>> tool_call_correctness([], [])
++        1.0
++    """
++    if not actual_tools and not expected_tools:
++        return 1.0
++
++    actual_counts = Counter(actual_tools)
++    expected_counts = Counter(expected_tools)
++
++    # Multiset intersection: min counts for each key
++    true_positives = sum(
++        min(actual_counts[name], expected_counts[name])
++        for name in actual_counts
++        if name in expected_counts
++    )
++
++    precision = true_positives / len(actual_tools) if actual_tools else 0.0
++    recall = true_positives / len(expected_tools) if expected_tools else 0.0
++
++    if precision + recall == 0.0:
++        return 0.0
++    return 2.0 * precision * recall / (precision + recall)
++
++
++def goal_completion(goal_reached: bool | None) -> float:
++    """Return 1.0 if the goal was reached, 0.0 otherwise.
++
++    Args:
++        goal_reached: Boolean flag set by the agent or a post-hoc judge.
++                      ``None`` is treated as ``False``.
++
++    Returns:
++        1.0 or 0.0.
++    """
++    return 1.0 if goal_reached is True else 0.0
++
++
++def step_efficiency(actual_steps: int, expected_steps: int) -> float:
++    """Return an efficiency score in [0.0, 1.0] based on step count.
++
++    Finishing early (or exactly on time) is rewarded equally: the score is 1.0
++    whenever ``actual_steps <= expected_steps``.  When the agent overshoots,
++    the score falls as ``expected_steps / actual_steps``.
++
++    Edge cases:
++    - Both 0: returns 1.0 (trivially efficient).
++    - expected 0 and actual > 0: returns 0.0 (agent did unnecessary work).
++
++    Args:
++        actual_steps:   Number of meaningful steps the agent actually took.
++        expected_steps: Number of steps in the optimal trajectory.
++
++    Returns:
++        Score in [0.0, 1.0].
++    """
++    if actual_steps < 0 or expected_steps < 0:
++        raise ValueError("Step counts must be non-negative.")
++    if actual_steps == 0 and expected_steps == 0:
++        return 1.0
++    if expected_steps == 0:
++        # Agent took steps when none were expected
++        return 0.0
++    if actual_steps <= expected_steps:
++        return 1.0
++    return expected_steps / actual_steps
++
++
++def trajectory_score(
++    tcf1: float,
++    gc: float,
++    se: float,
++) -> float:
++    """Return the weighted composite trajectory score.
++
++    Weights:
++        tool_call_correctness (tcf1): 0.40
++        goal_completion       (gc):   0.40
++        step_efficiency       (se):   0.20
++
++    All inputs must be in [0.0, 1.0].
++
++    Args:
++        tcf1: Tool-call correctness F1 score.
++        gc:   Goal-completion score.
++        se:   Step-efficiency score.
++
++    Returns:
++        Composite score in [0.0, 1.0].
++    """
++    return 0.4 * tcf1 + 0.4 * gc + 0.2 * se

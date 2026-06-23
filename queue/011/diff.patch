@@ -1,0 +1,294 @@
+diff --git a/tests/test_harness.py b/tests/test_harness.py
+new file mode 100644
+index 0000000..95f51a1
+--- /dev/null
++++ b/tests/test_harness.py
+@@ -0,0 +1,288 @@
++"""Tests for agent_eval.harness â€” load, evaluate_run, Bundle, Report."""
++
++import json
++
++import pytest
++
++from agent_eval.harness import (
++    Report,
++    RunResult,
++    evaluate_run,
++    load_bundle,
++    load_bundle_from_dict,
++)
++from agent_eval.schema import ExpectedRun, Run, Step, ToolCall
++
++# ---------------------------------------------------------------------------
++# Fixtures
++# ---------------------------------------------------------------------------
++
++SAMPLE_BUNDLE = {
++    "runs": [
++        {
++            "id": "r1",
++            "task": "Search for Paris",
++            "steps": [
++                {"thought": "go", "tool_call": {"name": "search", "args": {}}, "observation": "Paris"}
++            ],
++            "final_answer": "Paris",
++            "goal_reached": True,
++        },
++        {
++            "id": "r2",
++            "task": "Calculate tip",
++            "steps": [
++                {"tool_call": {"name": "calculator", "args": {"expr": "48*0.15"}}, "observation": "7.2"},
++                {"tool_call": {"name": "calculator", "args": {"expr": "48+7.2"}}, "observation": "55.2"},
++            ],
++            "final_answer": "Tip: $7.20",
++            "goal_reached": True,
++        },
++    ],
++    "expected": [
++        {
++            "id": "r1",
++            "expected_tools": ["search"],
++            "expected_answer": "Paris",
++            "expected_steps": 1,
++            "goal_description": "Find Paris",
++        },
++        {
++            "id": "r2",
++            "expected_tools": ["calculator", "calculator"],
++            "expected_answer": "Tip: $7.20",
++            "expected_steps": 2,
++            "goal_description": "Compute tip",
++        },
++    ],
++}
++
++
++# ---------------------------------------------------------------------------
++# evaluate_run
++# ---------------------------------------------------------------------------
++
++
++class TestEvaluateRun:
++    def test_perfect_run(self):
++        run = Run(
++            id="x",
++            task="t",
++            steps=[Step(tool_call=ToolCall(name="search"))],
++            final_answer="done",
++            goal_reached=True,
++        )
++        expected = ExpectedRun(
++            id="x",
++            expected_tools=["search"],
++            expected_answer="done",
++            expected_steps=1,
++        )
++        result = evaluate_run(run, expected)
++        assert result.tool_call_correctness == pytest.approx(1.0)
++        assert result.goal_completion == pytest.approx(1.0)
++        assert result.step_efficiency == pytest.approx(1.0)
++        assert result.trajectory_score == pytest.approx(1.0)
++
++    def test_wrong_tool_goal_not_reached(self):
++        run = Run(
++            id="x",
++            task="t",
++            steps=[Step(tool_call=ToolCall(name="wrong_tool"))],
++            final_answer="",
++            goal_reached=False,
++        )
++        expected = ExpectedRun(
++            id="x",
++            expected_tools=["search"],
++            expected_answer="",
++            expected_steps=1,
++        )
++        result = evaluate_run(run, expected)
++        assert result.tool_call_correctness == pytest.approx(0.0)
++        assert result.goal_completion == pytest.approx(0.0)
++        assert result.step_efficiency == pytest.approx(1.0)  # same number of steps
++        # 0.4*0 + 0.4*0 + 0.2*1 = 0.2
++        assert result.trajectory_score == pytest.approx(0.2)
++
++    def test_no_tools_called(self):
++        run = Run(
++            id="x",
++            task="t",
++            steps=[Step(thought="hmm")],  # no tool_call
++            final_answer="guess",
++            goal_reached=True,
++        )
++        expected = ExpectedRun(
++            id="x",
++            expected_tools=["search"],
++            expected_answer="answer",
++            expected_steps=1,
++        )
++        result = evaluate_run(run, expected)
++        # actual_tools=[] expected_tools=["search"] â†’ F1=0.0
++        assert result.tool_call_correctness == pytest.approx(0.0)
++        assert result.goal_completion == pytest.approx(1.0)
++
++    def test_run_id_and_task_preserved(self):
++        run = Run(id="abc", task="my task", steps=[], final_answer="", goal_reached=None)
++        expected = ExpectedRun(id="abc", expected_tools=[], expected_answer="", expected_steps=0)
++        result = evaluate_run(run, expected)
++        assert result.run_id == "abc"
++        assert result.task == "my task"
++
++    def test_extra_steps_lowers_efficiency(self):
++        # 4 tool-bearing steps taken, 2 expected â†’ meaningful=4, efficiency = 2/4 = 0.5
++        steps = [Step(tool_call=ToolCall(name="search")) for _ in range(4)]
++        run = Run(id="x", task="t", steps=steps, final_answer="done", goal_reached=True)
++        expected = ExpectedRun(
++            id="x", expected_tools=["search"] * 4, expected_answer="done", expected_steps=2
++        )
++        result = evaluate_run(run, expected)
++        assert result.step_efficiency == pytest.approx(0.5)
++
++    def test_reflection_step_does_not_inflate_efficiency(self):
++        # Optimal run: 1 tool call + 1 reflection (no-op) step.
++        # Meaningful steps = 1, expected = 1 â†’ efficiency must be 1.0.
++        steps = [
++            Step(tool_call=ToolCall(name="search"), observation="result"),
++            Step(thought="Looks good, I have my answer."),  # no tool_call
++        ]
++        run = Run(id="x", task="t", steps=steps, final_answer="result", goal_reached=True)
++        expected = ExpectedRun(
++            id="x",
++            expected_tools=["search"],
++            expected_answer="result",
++            expected_steps=1,
++        )
++        result = evaluate_run(run, expected)
++        assert result.step_efficiency == pytest.approx(1.0)
++        assert result.trajectory_score == pytest.approx(1.0)
++
++
++# ---------------------------------------------------------------------------
++# Bundle and load_bundle_from_dict
++# ---------------------------------------------------------------------------
++
++
++class TestBundle:
++    def test_load_from_dict(self):
++        bundle = load_bundle_from_dict(SAMPLE_BUNDLE)
++        assert "r1" in bundle.runs
++        assert "r2" in bundle.runs
++        assert "r1" in bundle.expected
++        assert "r2" in bundle.expected
++
++    def test_evaluate_returns_report(self):
++        bundle = load_bundle_from_dict(SAMPLE_BUNDLE)
++        report = bundle.evaluate()
++        assert isinstance(report, Report)
++        assert len(report.results) == 2
++
++    def test_aggregate_keys(self):
++        bundle = load_bundle_from_dict(SAMPLE_BUNDLE)
++        report = bundle.evaluate()
++        assert "tool_call_correctness" in report.aggregate
++        assert "goal_completion" in report.aggregate
++        assert "step_efficiency" in report.aggregate
++        assert "trajectory_score" in report.aggregate
++
++    def test_perfect_bundle_scores(self):
++        # Both runs in SAMPLE_BUNDLE: correct tools, goal reached, right number of steps
++        bundle = load_bundle_from_dict(SAMPLE_BUNDLE)
++        report = bundle.evaluate()
++        for r in report.results:
++            assert r.tool_call_correctness == pytest.approx(1.0)
++            assert r.goal_completion == pytest.approx(1.0)
++            assert r.step_efficiency == pytest.approx(1.0)
++            assert r.trajectory_score == pytest.approx(1.0)
++
++    def test_unmatched_run_skipped(self):
++        # "r3" exists in runs but has no expected spec
++        data = {
++            "runs": [
++                *SAMPLE_BUNDLE["runs"],
++                {"id": "r3", "task": "orphan", "steps": [], "final_answer": "", "goal_reached": None},
++            ],
++            "expected": SAMPLE_BUNDLE["expected"],
++        }
++        bundle = load_bundle_from_dict(data)
++        report = bundle.evaluate()
++        ids = {r.run_id for r in report.results}
++        assert "r3" not in ids
++        assert len(report.results) == 2
++
++    def test_empty_bundle(self):
++        bundle = load_bundle_from_dict({"runs": [], "expected": []})
++        report = bundle.evaluate()
++        assert report.results == []
++        assert report.aggregate == {}
++
++    def test_render_contains_run_ids(self):
++        bundle = load_bundle_from_dict(SAMPLE_BUNDLE)
++        report = bundle.evaluate()
++        rendered = report.render()
++        assert "r1" in rendered
++        assert "r2" in rendered
++        assert "AGGREGATE" in rendered
++
++
++# ---------------------------------------------------------------------------
++# load_bundle (file-based)
++# ---------------------------------------------------------------------------
++
++
++class TestLoadBundle:
++    def test_load_from_file(self, tmp_path):
++        p = tmp_path / "bundle.json"
++        p.write_text(json.dumps(SAMPLE_BUNDLE), encoding="utf-8")
++        bundle = load_bundle(p)
++        assert "r1" in bundle.runs
++        assert "r2" in bundle.expected
++
++    def test_missing_file_raises(self, tmp_path):
++        with pytest.raises(FileNotFoundError):
++            load_bundle(tmp_path / "nonexistent.json")
++
++    def test_evaluate_after_load(self, tmp_path):
++        p = tmp_path / "bundle.json"
++        p.write_text(json.dumps(SAMPLE_BUNDLE), encoding="utf-8")
++        report = load_bundle(p).evaluate()
++        assert len(report.results) == 2
++        assert report.aggregate["trajectory_score"] == pytest.approx(1.0)
++
++
++# ---------------------------------------------------------------------------
++# Report.render
++# ---------------------------------------------------------------------------
++
++
++class TestReportRender:
++    def test_render_empty(self):
++        report = Report()
++        text = report.render()
++        assert "No runs evaluated" in text
++
++    def test_render_header(self):
++        report = Report(
++            results=[
++                RunResult(
++                    run_id="r1",
++                    task="my task",
++                    tool_call_correctness=1.0,
++                    goal_completion=1.0,
++                    step_efficiency=1.0,
++                    trajectory_score=1.0,
++                )
++            ],
++            aggregate={
++                "tool_call_correctness": 1.0,
++                "goal_completion": 1.0,
++                "step_efficiency": 1.0,
++                "trajectory_score": 1.0,
++            },
++        )
++        text = report.render()
++        assert "agent-eval Report" in text
++        assert "1.000" in text
++        assert "my task" in text

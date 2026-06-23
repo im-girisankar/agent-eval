@@ -1,0 +1,160 @@
+diff --git a/src/agent_eval/schema.py b/src/agent_eval/schema.py
+new file mode 100644
+index 0000000..eac8c57
+--- /dev/null
++++ b/src/agent_eval/schema.py
+@@ -0,0 +1,154 @@
++"""Data-model for agent trajectory evaluation.
++
++JSON schema (for run bundle files)
++-----------------------------------
++A *bundle* file is a JSON object with two top-level keys:
++
++    {
++        "runs": [ <Run>, ... ],
++        "expected": [ <ExpectedRun>, ... ]
++    }
++
++Each <Run> object:
++    {
++        "id":           str          -- unique identifier, matched to ExpectedRun.id
++        "task":         str          -- natural-language task description
++        "steps":        [ <Step>, ... ]
++        "final_answer": str          -- the agent's final answer text
++        "goal_reached": bool | null  -- optional; set by agent or post-hoc judge
++    }
++
++Each <Step> object (all fields optional except at least one must be present):
++    {
++        "thought":    str | null     -- chain-of-thought text
++        "tool_call":  <ToolCall> | null
++        "observation": str | null    -- result returned from the tool
++    }
++
++Each <ToolCall> object:
++    {
++        "name": str              -- tool name (e.g. "search", "calculator")
++        "args": { str: any }     -- keyword arguments passed to the tool
++    }
++
++Each <ExpectedRun> object:
++    {
++        "id":                  str       -- must match a Run.id
++        "expected_tools":      [str]     -- ordered list of expected tool names
++        "expected_answer":     str       -- gold final answer (optional, "" if not used)
++        "expected_steps":      int       -- number of steps in the optimal trajectory
++        "goal_description":    str       -- human-readable goal (informational only)
++    }
++"""
++
++from __future__ import annotations
++
++from dataclasses import dataclass, field
++
++
++@dataclass
++class ToolCall:
++    """A single tool invocation by the agent.
++
++    Attributes:
++        name: The tool name (e.g. ``"search"``, ``"calculator"``).
++        args: Keyword arguments passed to the tool. Defaults to empty dict.
++    """
++
++    name: str
++    args: dict[str, object] = field(default_factory=dict)
++
++    @classmethod
++    def from_dict(cls, d: dict[str, object]) -> ToolCall:
++        return cls(name=str(d["name"]), args=dict(d.get("args", {})))  # type: ignore[arg-type]
++
++
++@dataclass
++class Step:
++    """One step in an agent's trajectory.
++
++    At least one of ``thought``, ``tool_call``, or ``observation`` should be
++    non-None for the step to be meaningful.
++
++    Attributes:
++        thought:     Optional chain-of-thought / scratchpad text.
++        tool_call:   Optional tool invocation in this step.
++        observation: Optional result returned from the tool.
++    """
++
++    thought: str | None = None
++    tool_call: ToolCall | None = None
++    observation: str | None = None
++
++    @classmethod
++    def from_dict(cls, d: dict[str, object]) -> Step:
++        tc_raw = d.get("tool_call")
++        tc = ToolCall.from_dict(tc_raw) if tc_raw else None  # type: ignore[arg-type]
++        return cls(
++            thought=d.get("thought"),  # type: ignore[arg-type]
++            tool_call=tc,
++            observation=d.get("observation"),  # type: ignore[arg-type]
++        )
++
++
++@dataclass
++class Run:
++    """A recorded agent run (trajectory).
++
++    Attributes:
++        id:           Unique identifier. Matched to ``ExpectedRun.id`` during eval.
++        task:         Natural-language task the agent was given.
++        steps:        Ordered list of steps the agent took.
++        final_answer: The agent's final answer text.
++        goal_reached: Optional boolean set by the agent or a post-hoc judge.
++                      If ``None``, ``goal_completion`` returns 0.0.
++    """
++
++    id: str
++    task: str
++    steps: list[Step]
++    final_answer: str
++    goal_reached: bool | None = None
++
++    @classmethod
++    def from_dict(cls, d: dict[str, object]) -> Run:
++        steps = [Step.from_dict(s) for s in d.get("steps", [])]  # type: ignore[union-attr]
++        return cls(
++            id=str(d["id"]),
++            task=str(d["task"]),
++            steps=steps,
++            final_answer=str(d.get("final_answer", "")),
++            goal_reached=d.get("goal_reached"),  # type: ignore[arg-type]
++        )
++
++
++@dataclass
++class ExpectedRun:
++    """Gold specification for a run, used as the reference during evaluation.
++
++    Attributes:
++        id:               Must match exactly one ``Run.id``.
++        expected_tools:   Ordered list of tool names the agent *should* have called.
++                          Evaluation uses this as the reference set for F1.
++        expected_answer:  Gold final answer. Currently stored for reference;
++                          not used in metric computation (metrics use ``goal_reached``).
++        expected_steps:   Number of steps in the *optimal* trajectory.
++                          Used as the denominator for ``step_efficiency``.
++        goal_description: Human-readable description of the goal (informational).
++    """
++
++    id: str
++    expected_tools: list[str]
++    expected_answer: str
++    expected_steps: int
++    goal_description: str = ""
++
++    @classmethod
++    def from_dict(cls, d: dict[str, object]) -> ExpectedRun:
++        return cls(
++            id=str(d["id"]),
++            expected_tools=list(d.get("expected_tools", [])),  # type: ignore[arg-type]
++            expected_answer=str(d.get("expected_answer", "")),
++            expected_steps=int(d.get("expected_steps", 1)),
++            goal_description=str(d.get("goal_description", "")),
++        )

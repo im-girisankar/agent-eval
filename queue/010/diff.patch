@@ -1,0 +1,133 @@
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+new file mode 100644
+index 0000000..bdac99c
+--- /dev/null
++++ b/tests/test_cli.py
+@@ -0,0 +1,127 @@
++"""CLI smoke tests for agent_eval.cli.
++
++These tests call main() directly (no subprocess) and assert on exit codes
++and stdout output.
++"""
++
++import json
++
++import pytest
++
++from agent_eval.cli import main
++
++SAMPLE_BUNDLE = {
++    "runs": [
++        {
++            "id": "r1",
++            "task": "test task",
++            "steps": [
++                {"tool_call": {"name": "search", "args": {}}, "observation": "ok"}
++            ],
++            "final_answer": "done",
++            "goal_reached": True,
++        }
++    ],
++    "expected": [
++        {
++            "id": "r1",
++            "expected_tools": ["search"],
++            "expected_answer": "done",
++            "expected_steps": 1,
++            "goal_description": "test",
++        }
++    ],
++}
++
++
++class TestCLIRun:
++    def test_run_exits_zero(self, tmp_path, capsys):
++        p = tmp_path / "bundle.json"
++        p.write_text(json.dumps(SAMPLE_BUNDLE), encoding="utf-8")
++        with pytest.raises(SystemExit) as exc:
++            main(["run", str(p)])
++        assert exc.value.code == 0
++
++    def test_run_prints_report(self, tmp_path, capsys):
++        p = tmp_path / "bundle.json"
++        p.write_text(json.dumps(SAMPLE_BUNDLE), encoding="utf-8")
++        with pytest.raises(SystemExit):
++            main(["run", str(p)])
++        captured = capsys.readouterr()
++        assert "agent-eval Report" in captured.out
++        assert "r1" in captured.out
++
++    def test_run_missing_file_exits_one(self, tmp_path, capsys):
++        with pytest.raises(SystemExit) as exc:
++            main(["run", str(tmp_path / "nope.json")])
++        assert exc.value.code == 1
++
++    def test_run_no_args_exits_one(self, capsys):
++        with pytest.raises(SystemExit) as exc:
++            main(["run"])
++        assert exc.value.code == 1
++
++    def test_unknown_command_exits_one(self, capsys):
++        with pytest.raises(SystemExit) as exc:
++            main(["bogus"])
++        assert exc.value.code == 1
++
++    def test_no_args_exits_zero(self, capsys):
++        # ageval with no args prints usage and exits 0
++        with pytest.raises(SystemExit) as exc:
++            main([])
++        assert exc.value.code == 0
++
++    def test_run_aggregate_in_output(self, tmp_path, capsys):
++        p = tmp_path / "bundle.json"
++        p.write_text(json.dumps(SAMPLE_BUNDLE), encoding="utf-8")
++        with pytest.raises(SystemExit):
++            main(["run", str(p)])
++        captured = capsys.readouterr()
++        assert "AGGREGATE" in captured.out
++        assert "1.000" in captured.out
++
++    def test_run_sample_examples(self, tmp_path, capsys):
++        """End-to-end: multi-run bundle, mixed scores, report produced."""
++        bundle = {
++            "runs": [
++                {
++                    "id": "a",
++                    "task": "task A",
++                    "steps": [{"tool_call": {"name": "search", "args": {}}, "observation": "x"}],
++                    "final_answer": "x",
++                    "goal_reached": True,
++                },
++                {
++                    "id": "b",
++                    "task": "task B",
++                    "steps": [],
++                    "final_answer": "",
++                    "goal_reached": False,
++                },
++            ],
++            "expected": [
++                {
++                    "id": "a",
++                    "expected_tools": ["search"],
++                    "expected_answer": "x",
++                    "expected_steps": 1,
++                    "goal_description": "find x",
++                },
++                {
++                    "id": "b",
++                    "expected_tools": ["search"],
++                    "expected_answer": "y",
++                    "expected_steps": 2,
++                    "goal_description": "find y",
++                },
++            ],
++        }
++        p = tmp_path / "multi.json"
++        p.write_text(json.dumps(bundle), encoding="utf-8")
++        with pytest.raises(SystemExit) as exc:
++            main(["run", str(p)])
++        assert exc.value.code == 0
++        captured = capsys.readouterr()
++        assert "a" in captured.out
++        assert "b" in captured.out

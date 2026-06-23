@@ -1,0 +1,232 @@
+diff --git a/src/agent_eval/harness.py b/src/agent_eval/harness.py
+new file mode 100644
+index 0000000..2726f84
+--- /dev/null
++++ b/src/agent_eval/harness.py
+@@ -0,0 +1,226 @@
++"""Evaluation harness: load JSON bundles, run metrics, produce reports.
++
++Usage
++-----
++    from agent_eval.harness import load_bundle, evaluate_run, Report
++
++    bundle = load_bundle(Path("examples/sample_runs.json"))
++    report = bundle.evaluate()
++    print(report.render())
++"""
++
++from __future__ import annotations
++
++import json
++from dataclasses import dataclass, field
++from pathlib import Path
++
++from agent_eval.metrics import (
++    goal_completion,
++    step_efficiency,
++    tool_call_correctness,
++    trajectory_score,
++)
++from agent_eval.schema import ExpectedRun, Run
++
++
++@dataclass
++class RunResult:
++    """Evaluation result for a single run.
++
++    Attributes:
++        run_id:                 Identifier of the evaluated run.
++        task:                   Task description.
++        tool_call_correctness:  F1 of actual vs expected tool names.
++        goal_completion:        1.0 / 0.0 binary goal signal.
++        step_efficiency:        Efficiency ratio capped at 1.0.
++        trajectory_score:       Weighted composite of the three metrics.
++    """
++
++    run_id: str
++    task: str
++    tool_call_correctness: float
++    goal_completion: float
++    step_efficiency: float
++    trajectory_score: float
++
++
++@dataclass
++class Report:
++    """Aggregated evaluation report across all runs.
++
++    Attributes:
++        results:   Per-run metric results.
++        aggregate: Mean of each metric across all runs.
++    """
++
++    results: list[RunResult] = field(default_factory=list)
++    aggregate: dict[str, float] = field(default_factory=dict)
++
++    def render(self) -> str:
++        """Render the report as a Markdown/text string.
++
++        Returns:
++            A human-readable string containing a per-run table and aggregate
++            summary.
++        """
++        lines: list[str] = []
++        lines.append("# agent-eval Report")
++        lines.append("")
++
++        if not self.results:
++            lines.append("_No runs evaluated._")
++            return "\n".join(lines)
++
++        # Header
++        col = "{:<20} {:>8} {:>8} {:>8} {:>10}"
++        lines.append(col.format("Run ID", "TC-F1", "Goal", "Eff.", "Score"))
++        lines.append("-" * 60)
++        for r in self.results:
++            lines.append(
++                col.format(
++                    r.run_id[:20],
++                    f"{r.tool_call_correctness:.3f}",
++                    f"{r.goal_completion:.3f}",
++                    f"{r.step_efficiency:.3f}",
++                    f"{r.trajectory_score:.3f}",
++                )
++            )
++
++        lines.append("-" * 60)
++        agg = self.aggregate
++        lines.append(
++            col.format(
++                "AGGREGATE",
++                f"{agg.get('tool_call_correctness', 0.0):.3f}",
++                f"{agg.get('goal_completion', 0.0):.3f}",
++                f"{agg.get('step_efficiency', 0.0):.3f}",
++                f"{agg.get('trajectory_score', 0.0):.3f}",
++            )
++        )
++        lines.append("")
++
++        # Per-run task details
++        lines.append("## Run details")
++        for r in self.results:
++            lines.append(f"- **{r.run_id}**: {r.task}")
++        return "\n".join(lines)
++
++
++def evaluate_run(run: Run, expected: ExpectedRun) -> RunResult:
++    """Evaluate a single ``Run`` against its ``ExpectedRun`` gold spec.
++
++    Args:
++        run:      The recorded agent trajectory.
++        expected: The gold specification for this run.
++
++    Returns:
++        A ``RunResult`` with all four metric values populated.
++    """
++    actual_tools = [
++        step.tool_call.name for step in run.steps if step.tool_call is not None
++    ]
++
++    # Count only meaningful steps (those that include a tool call) so that
++    # no-op / reflection-only steps do not inflate the step count and silently
++    # lower the efficiency score.
++    meaningful_steps = len([s for s in run.steps if s.tool_call is not None])
++
++    tcf1 = tool_call_correctness(actual_tools, expected.expected_tools)
++    gc = goal_completion(run.goal_reached)
++    se = step_efficiency(meaningful_steps, expected.expected_steps)
++    ts = trajectory_score(tcf1, gc, se)
++
++    return RunResult(
++        run_id=run.id,
++        task=run.task,
++        tool_call_correctness=tcf1,
++        goal_completion=gc,
++        step_efficiency=se,
++        trajectory_score=ts,
++    )
++
++
++def _mean(values: list[float]) -> float:
++    """Return arithmetic mean of *values*, or 0.0 for empty list."""
++    return sum(values) / len(values) if values else 0.0
++
++
++@dataclass
++class Bundle:
++    """A matched set of runs and expected specs, ready for evaluation.
++
++    Attributes:
++        runs:     Recorded agent runs keyed by run id.
++        expected: Gold specs keyed by run id.
++    """
++
++    runs: dict[str, Run]
++    expected: dict[str, ExpectedRun]
++
++    def evaluate(self) -> Report:
++        """Evaluate all matched runs and return a ``Report``.
++
++        Only runs whose ``id`` appears in both ``runs`` and ``expected`` are
++        evaluated.  Unmatched runs or specs are silently skipped.
++
++        Returns:
++            A ``Report`` with per-run results and aggregated metrics.
++        """
++        results: list[RunResult] = []
++        matched_ids = sorted(set(self.runs) & set(self.expected))
++
++        for run_id in matched_ids:
++            result = evaluate_run(self.runs[run_id], self.expected[run_id])
++            results.append(result)
++
++        if results:
++            aggregate = {
++                "tool_call_correctness": _mean([r.tool_call_correctness for r in results]),
++                "goal_completion": _mean([r.goal_completion for r in results]),
++                "step_efficiency": _mean([r.step_efficiency for r in results]),
++                "trajectory_score": _mean([r.trajectory_score for r in results]),
++            }
++        else:
++            aggregate = {}
++
++        return Report(results=results, aggregate=aggregate)
++
++
++def load_bundle(path: Path | str) -> Bundle:
++    """Load a JSON bundle file and return a ``Bundle`` ready for evaluation.
++
++    The file must conform to the schema documented in ``agent_eval.schema``.
++
++    Args:
++        path: Path to the JSON bundle file.
++
++    Returns:
++        A ``Bundle`` object.
++
++    Raises:
++        FileNotFoundError: If *path* does not exist.
++        KeyError / ValueError: If the JSON does not match the expected schema.
++    """
++    with open(path, encoding="utf-8") as fh:
++        data = json.load(fh)
++    return load_bundle_from_dict(data)
++
++
++def load_bundle_from_dict(data: dict[str, object]) -> Bundle:
++    """Load a ``Bundle`` from an already-parsed dict (useful for testing).
++
++    Args:
++        data: Dict conforming to the bundle JSON schema.
++
++    Returns:
++        A ``Bundle`` object.
++    """
++    runs_list = data.get("runs", [])
++    expected_list = data.get("expected", [])
++
++    runs = {r.id: r for r in (Run.from_dict(d) for d in runs_list)}  # type: ignore[union-attr]
++    expected = {
++        e.id: e for e in (ExpectedRun.from_dict(d) for d in expected_list)  # type: ignore[union-attr]
++    }
++    return Bundle(runs=runs, expected=expected)
