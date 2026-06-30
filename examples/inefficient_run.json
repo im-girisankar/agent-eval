@@ -1,0 +1,41 @@
+{
+  "runs": [
+    {
+      "id": "ineff-001",
+      "task": "What is 2 + 2?",
+      "steps": [
+        {
+          "thought": "Let me search for this.",
+          "tool_call": {"name": "search", "args": {"query": "what is 2 plus 2"}},
+          "observation": "2 + 2 = 4"
+        },
+        {
+          "thought": "Let me verify with a calculator.",
+          "tool_call": {"name": "calculator", "args": {"expression": "2 + 2"}},
+          "observation": "4"
+        },
+        {
+          "thought": "Let me search again to be sure.",
+          "tool_call": {"name": "search", "args": {"query": "2 + 2 arithmetic"}},
+          "observation": "2 + 2 equals 4 in standard arithmetic."
+        },
+        {
+          "thought": "I have enough confirmation now.",
+          "tool_call": null,
+          "observation": null
+        }
+      ],
+      "final_answer": "2 + 2 = 4.",
+      "goal_reached": true
+    }
+  ],
+  "expected": [
+    {
+      "id": "ineff-001",
+      "expected_tools": ["calculator"],
+      "expected_answer": "4",
+      "expected_steps": 1,
+      "goal_description": "Compute 2 + 2."
+    }
+  ]
+}
